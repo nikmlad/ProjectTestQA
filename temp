@@ -1,0 +1,101 @@
+import com.codeborne.selenide.WebDriverRunner;
+import org.openqa.selenium.devtools.DevTools;
+import org.openqa.selenium.devtools.v125.network.Network;
+import org.openqa.selenium.devtools.v125.network.model.Request;
+import org.openqa.selenium.devtools.v125.network.model.Response;
+import org.openqa.selenium.devtools.v125.network.model.RequestId;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+
+public class DevToolsSteps {
+
+    private DevTools devTools;
+
+    // Хранилища
+    private final ConcurrentMap<RequestId, Request> requests = new ConcurrentHashMap<>();
+    private final ConcurrentMap<RequestId, Response> responses = new ConcurrentHashMap<>();
+    private final ConcurrentMap<RequestId, String> responseBodies = new ConcurrentHashMap<>();
+
+    public void initDevTools() {
+        devTools = WebDriverRunner.getWebDriver()
+                .getDevTools();
+
+        devTools.createSession();
+        devTools.send(Network.enable(Optional.empty(), Optional.empty(), Optional.empty()));
+
+        // Ловим запросы
+        devTools.addListener(Network.requestWillBeSent(), event -> {
+            requests.put(event.getRequestId(), event.getRequest());
+        });
+
+        // Ловим ответы (мета)
+        devTools.addListener(Network.responseReceived(), event -> {
+            responses.put(event.getRequestId(), event.getResponse());
+        });
+
+        // Ловим тело ответа
+        devTools.addListener(Network.loadingFinished(), event -> {
+            RequestId requestId = event.getRequestId();
+            try {
+                String body = devTools.send(Network.getResponseBody(requestId)).getBody();
+                responseBodies.put(requestId, body);
+            } catch (Exception e) {
+                // иногда тело недоступно (например, для бинарных данных)
+            }
+        });
+    }
+
+    // 🔹 Найти requestId по URL (частичное совпадение)
+    private Optional<RequestId> findRequestIdByUrl(String urlPart) {
+        return requests.entrySet().stream()
+                .filter(entry -> entry.getValue().getUrl().contains(urlPart))
+                .map(Map.Entry::getKey)
+                .findFirst();
+    }
+
+    // =========================
+    // 📌 1. Получить тело запроса
+    // =========================
+    public String getRequestBody(String urlPart) {
+        RequestId requestId = findRequestIdByUrl(urlPart)
+                .orElseThrow(() -> new RuntimeException("Request not found: " + urlPart));
+
+        Request request = requests.get(requestId);
+
+        return request.getPostData().orElse(null);
+    }
+
+    // =========================
+    // 📌 2. Получить тело ответа
+    // =========================
+    public String getResponseBody(String urlPart) {
+        RequestId requestId = findRequestIdByUrl(urlPart)
+                .orElseThrow(() -> new RuntimeException("Request not found: " + urlPart));
+
+        return responseBodies.get(requestId);
+    }
+
+    // =========================
+    // 📌 3. Проверить статус ответа
+    // =========================
+    public int getResponseStatus(String urlPart) {
+        RequestId requestId = findRequestIdByUrl(urlPart)
+                .orElseThrow(() -> new RuntimeException("Request not found: " + urlPart));
+
+        Response response = responses.get(requestId);
+
+        return response.getStatus().intValue();
+    }
+
+    public void assertStatusCode(String urlPart, int expectedStatus) {
+        int actualStatus = getResponseStatus(urlPart);
+
+        if (actualStatus != expectedStatus) {
+            throw new AssertionError(
+                    "Expected status: " + expectedStatus + ", but got: " + actualStatus
+            );
+        }
+    }
+}
