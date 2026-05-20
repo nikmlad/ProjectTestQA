@@ -1,0 +1,157 @@
+package framework.devtools;
+
+import com.codeborne.selenide.WebDriverRunner;
+import org.openqa.selenium.devtools.DevTools;
+import org.openqa.selenium.devtools.HasDevTools;
+
+import org.openqa.selenium.devtools.v125.network.Network;
+import org.openqa.selenium.devtools.v125.network.model.Request;
+import org.openqa.selenium.devtools.v125.network.model.RequestId;
+import org.openqa.selenium.devtools.v125.network.model.Response;
+
+import org.openqa.selenium.chrome.ChromeDriver;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
+public class DevToolsSteps {
+
+    private final DevTools devTools;
+
+    public DevToolsSteps() {
+
+        ChromeDriver driver = (ChromeDriver) WebDriverRunner.getWebDriver();
+
+        this.devTools = ((HasDevTools) driver).getDevTools();
+
+        devTools.createSession();
+
+        devTools.send(Network.enable(
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty()
+        ));
+    }
+
+    /**
+     * Перехват request/response по partial URL.
+     *
+     * @param partialUrl часть URL запроса
+     * @param action действие, которое инициирует запрос
+     * @return результат перехвата
+     */
+    public NetworkCaptureResult captureRequest(
+            String partialUrl,
+            Runnable action
+    ) {
+
+        AtomicReference<RequestId> requestIdRef = new AtomicReference<>();
+
+        AtomicReference<Request> requestRef = new AtomicReference<>();
+
+        AtomicReference<Response> responseRef = new AtomicReference<>();
+
+        AtomicReference<String> responseBodyRef = new AtomicReference<>();
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        /*
+         * REQUEST
+         */
+        devTools.addListener(Network.requestWillBeSent(), event -> {
+
+            String url = event.getRequest().getUrl();
+
+            if (!url.contains(partialUrl)) {
+                return;
+            }
+
+            requestIdRef.set(event.getRequestId());
+
+            requestRef.set(event.getRequest());
+        });
+
+        /*
+         * RESPONSE
+         */
+        devTools.addListener(Network.responseReceived(), event -> {
+
+            RequestId requestId = requestIdRef.get();
+
+            if (requestId == null) {
+                return;
+            }
+
+            if (!event.getRequestId().equals(requestId)) {
+                return;
+            }
+
+            responseRef.set(event.getResponse());
+
+            try {
+
+                String responseBody = devTools.send(
+                        Network.getResponseBody(event.getRequestId())
+                ).getBody();
+
+                responseBodyRef.set(responseBody);
+
+            } catch (Exception e) {
+
+                responseBodyRef.set(
+                        "FAILED_TO_READ_RESPONSE_BODY: " + e.getMessage()
+                );
+            }
+
+            latch.countDown();
+        });
+
+        /*
+         * Выполняем пользовательское действие
+         */
+        action.run();
+
+        try {
+
+            boolean completed = latch.await(30, TimeUnit.SECONDS);
+
+            if (!completed) {
+                throw new RuntimeException(
+                        "Не дождались network события: " + partialUrl
+                );
+            }
+
+        } catch (InterruptedException e) {
+
+            Thread.currentThread().interrupt();
+
+            throw new RuntimeException(e);
+        }
+
+        Request request = requestRef.get();
+
+        Response response = responseRef.get();
+
+        String requestBody = request.getPostData().orElse("");
+
+        Map<String, Object> requestHeaders = new HashMap<>();
+        request.getHeaders().forEach(requestHeaders::put);
+
+        Map<String, Object> responseHeaders = new HashMap<>();
+        response.getHeaders().forEach(responseHeaders::put);
+
+        return new NetworkCaptureResult(
+                request.getUrl(),
+                request.getMethod(),
+                response.getStatus(),
+                requestBody,
+                responseBodyRef.get(),
+                requestHeaders,
+                responseHeaders
+        );
+    }
+}
