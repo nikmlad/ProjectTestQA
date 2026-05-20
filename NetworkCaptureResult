@@ -1,0 +1,63 @@
+package framework.devtools;
+
+import java.util.Map;
+
+public class NetworkCaptureResult {
+
+    private final String url;
+    private final String method;
+
+    private final Integer status;
+
+    private final String requestBody;
+    private final String responseBody;
+
+    private final Map<String, Object> requestHeaders;
+    private final Map<String, Object> responseHeaders;
+
+    public NetworkCaptureResult(
+            String url,
+            String method,
+            Integer status,
+            String requestBody,
+            String responseBody,
+            Map<String, Object> requestHeaders,
+            Map<String, Object> responseHeaders
+    ) {
+        this.url = url;
+        this.method = method;
+        this.status = status;
+        this.requestBody = requestBody;
+        this.responseBody = responseBody;
+        this.requestHeaders = requestHeaders;
+        this.responseHeaders = responseHeaders;
+    }
+
+    public String getUrl() {
+        return url;
+    }
+
+    public String getMethod() {
+        return method;
+    }
+
+    public Integer getStatus() {
+        return status;
+    }
+
+    public String getRequestBody() {
+        return requestBody;
+    }
+
+    public String getResponseBody() {
+        return responseBody;
+    }
+
+    public Map<String, Object> getRequestHeaders() {
+        return requestHeaders;
+    }
+
+    public Map<String, Object> getResponseHeaders() {
+        return responseHeaders;
+    }
+}
